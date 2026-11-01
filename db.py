@@ -1,202 +1,195 @@
-# Движок  СУБД.
+# Движок СУБД.
+
+import os
+
 
 class DBError(Exception):
-    """
-    Базовое исключение СУБД. От него наследуются все остальные
-    исключения проекта, что позволяет ловить их одной строкой.
-    """
+    """Базовое исключение СУБД. От него наследуются остальные."""
     pass
 
 
 class TableAlreadyExists(DBError):
-    """
-    Кидается функцией create_table, если таблица с таким именем
-    уже существует в базе.
-    """
+    """Таблица с таким именем уже есть."""
     pass
 
 
 class TableNotFound(DBError):
-    """
-    Кидается функциями drop_table, alter_table, insert, select,
-    если указана таблица, которой нет в базе.
-    """
+    """Таблицы с таким именем нет."""
     pass
 
 
-DB_FOLDER = "database"
-SCHEMA_FILE = "database/schema.txt"
+class ColumnNotFound(DBError):
+    """Колонки с таким именем нет в таблице."""
+    pass
 
 
-def read_file(filename):
+class Database:
     """
-    Читает файл целиком и возвращает его содержимое в виде строки.
-    Если файла нет — возвращает пустую строку, а не кидает ошибку,
-    потому что при первом запуске schema.txt может не быть.
+    Класс базы данных.
+    При создании объекта схема читается один раз и хранится в памяти.
+    Все операции работают с этим объектом, а не с файлами напрямую.
     """
-    try:
+
+    def __init__(self, folder="database"):
+        """
+        Создаёт объект базы. Создаёт папку, если её нет, и загружает схему.
+        """
+        self.folder = folder
+        self.schema_file = folder + "/schema.txt"
+
+        if not os.path.exists(self.folder):
+            os.makedirs(self.folder)
+
+        self.schema = self._load_schema()
+
+    def _table_file(self, table_name):
+        """
+        Возвращает путь к файлу данных таблицы.
+        """
+        return self.folder + "/" + table_name + ".txt"
+
+    def _read_lines(self, filename):
+        """
+        Читает файл и возвращает список непустых строк.
+        """
+        if not os.path.exists(filename):
+            return []
+
         f = open(filename, "r", encoding="utf-8")
-    except FileNotFoundError:
-        return ""
+        content = f.read()
+        f.close()
 
-    content = f.read()
-    f.close()
-    return content
+        lines = []
+        for line in content.split("\n"):
+            if line != "":
+                lines.append(line)
+        return lines
 
+    def _write_lines(self, filename, lines):
+        """
+        Пишет списоК строк в файл.
+        """
+        f = open(filename, "w", encoding="utf-8")
+        f.write("\n".join(lines))
+        f.close()
 
-def write_file(filename, content):
-    """
-    Записывает строку в файл, полностью перезаписывая его содержимое.
-    Если файла не было — создаёт новый.
-    """
-    f = open(filename, "w", encoding="utf-8")
-    f.write(content)
-    f.close()
+    def _load_schema(self):
+        """
+        Читает schema.txt и возвращает словарь {имя: [колонки]}.
+        """
+        schema = {}
+        for line in self._read_lines(self.schema_file):
+            parts = line.split("|")
+            if len(parts) == 2:
+                schema[parts[0]] = parts[1].split(",")
+        return schema
 
-
-def read_lines(filename):
-    """
-    Читает файл и возвращает список непустых строк.
-    Пустые строки пропускаются, так как в файлах они служат
-    только разделителями и смысла не несут.
-    """
-    content = read_file(filename)
-
-    lines = []
-    for line in content.split("\n"):
-        if line != "":
+    def _save_schema(self):
+        """
+        Сохраняет схему в schema.txt.
+        """
+        lines = []
+        for table_name in self.schema:
+            line = table_name + "|" + ",".join(self.schema[table_name])
             lines.append(line)
-    return lines
+        self._write_lines(self.schema_file, lines)
 
+    def create_table(self, table_name, columns):
+        """
+        Создаёт новую таблицу с указанными колонками.
+        Кидает TableAlreadyExists, если таблица уже есть.
+        """
+        if table_name in self.schema:
+            raise TableAlreadyExists("Таблица '" + table_name + "' уже существует")
 
-def write_lines(filename, lines):
-    """
-    Записывает список строк в файл, соединяя их переводом строки.
-    Каждая строка списка становится отдельной строкой в файле.
-    """
-    write_file(filename, "\n".join(lines))
+        self.schema[table_name] = columns
+        self._save_schema()
+        self._write_lines(self._table_file(table_name), [])
 
+    def drop_table(self, table_name):
+        """
+        Удаляет таблицу из схемы и физически удаляет её файл данных.
+        Кидает TableNotFound, если таблицы нет.
+        """
+        if table_name not in self.schema:
+            raise TableNotFound("Таблицы '" + table_name + "' не существует")
 
-def table_file(table_name):
-    """
-    Возвращает путь к файлу с данными указанной таблицы.
-    Например, для таблицы users вернёт "database/users.txt".
-    """
-    return DB_FOLDER + "/" + table_name + ".txt"
+        del self.schema[table_name]
+        self._save_schema()
 
+        filename = self._table_file(table_name)
+        if os.path.exists(filename):
+            os.remove(filename)
 
-def load_schema():
-    """
-    Читает файл schema.txt и возвращает словарь вида
-    {имя_таблицы: [список колонок]}. Каждая строка файла имеет
-    формат "имя_таблицы|колонка1,колонка2,колонка3".
-    """
-    schema = {}
-    for line in read_lines(SCHEMA_FILE):
-        parts = line.split("|")
-        if len(parts) == 2:
-            schema[parts[0]] = parts[1].split(",")
-    return schema
+    def alter_table(self, table_name, new_columns):
+        """
+        Меняет список колонок таблицы. Данные не трогает.
+        Кидает TableNotFound, если таблицы нет.
+        """
+        if table_name not in self.schema:
+            raise TableNotFound("Таблицы '" + table_name + "' не существует")
 
+        self.schema[table_name] = new_columns
+        self._save_schema()
 
-def save_schema(schema):
-    """
-    Сохраняет словарь схемы в файл schema.txt, перезаписывая его.
-    Каждая таблица записывается одной строкой в формате
-    "имя_таблицы|колонка1,колонка2".
-    """
-    lines = []
-    for table_name in schema:
-        line = table_name + "|" + ",".join(schema[table_name])
-        lines.append(line)
-    write_lines(SCHEMA_FILE, lines)
+    def insert(self, table_name, values):
+        """
+        Добавляет строку в таблицу.
+        Кидает TableNotFound, если таблицы нет, и ValueError,
+        если число значений не совпадает с числом колонок.
+        """
+        if table_name not in self.schema:
+            raise TableNotFound("Таблицы '" + table_name + "' не существует")
 
+        columns = self.schema[table_name]
 
-def create_table(table_name, columns):
-    """
-    Создаёт новую таблицу с указанными колонками.
-    Если таблица с таким именем уже существует — кидает
-    TableAlreadyExists. При успехе создаёт пустой файл данных.
-    """
-    schema = load_schema()
+        if len(values) != len(columns):
+            raise ValueError(
+                "Ожидалось " + str(len(columns)) +
+                " значений, получено " + str(len(values))
+            )
 
-    if table_name in schema:
-        raise TableAlreadyExists("Таблица '" + table_name + "' уже существует")
+        rows = self._read_lines(self._table_file(table_name))
+        rows.append("|".join(values))
+        self._write_lines(self._table_file(table_name), rows)
 
-    schema[table_name] = columns
-    save_schema(schema)
-    write_lines(table_file(table_name), [])
+    def select(self, table_name, fields="*"):
+        """
+        Возвращает строки таблицы в виде матрицы.
+        Второй параметр список полей через запятую в любом порядке.
+        Можно дублировать поля. По умолчанию "*" — все поля.
+        Формат вывода: первая строка имена выбранных полей, дальше строки значений.
+        Кидает TableNotFound, если таблицы нет,
+        и ColumnNotFound, если запрошено несуществующее поле.
+        """
+        if table_name not in self.schema:
+            raise TableNotFound("Таблицы '" + table_name + "' не существует")
 
+        columns = self.schema[table_name]
 
-def drop_table(table_name):
-    """
-    Удаляет таблицу из схемы базы и очищает её файл данных.
-    Если таблицы с таким именем нет — кидает TableNotFound.
-    Без модуля os физически удалить файл нельзя, поэтому он очищается.
-    """
-    schema = load_schema()
+        if fields == "*":
+            selected = columns
+        else:
+            selected = fields.split(",")
+            for field in selected:
+                if field not in columns:
+                    raise ColumnNotFound(
+                        "Колонки '" + field + "' нет в таблице '" + table_name + "'"
+                    )
 
-    if table_name not in schema:
-        raise TableNotFound("Таблицы '" + table_name + "' не существует")
+        indexes = []
+        for field in selected:
+            indexes.append(columns.index(field))
 
-    del schema[table_name]
-    save_schema(schema)
-    write_lines(table_file(table_name), [])
+        matrix = []
+        matrix.append(list (selected))
 
+        rows = self._read_lines(self._table_file(table_name))
+        for row in rows:
+            values = row.split("|")
+            new_row = []
+            for i in indexes:
+                new_row.append(values[i])
+            matrix.append(new_row)
 
-def alter_table(table_name, new_columns):
-    """
-    Меняет список колонок у существующей таблицы в схеме базы.
-    Если таблицы нет — кидает TableNotFound. Данные в файле
-    таблицы при этом не изменяются, меняется только схема.
-    """
-    schema = load_schema()
-
-    if table_name not in schema:
-        raise TableNotFound("Таблицы '" + table_name + "' не существует")
-
-    schema[table_name] = new_columns
-    save_schema(schema)
-
-
-def insert(table_name, values):
-    """
-    Добавляет новую строку в указанную таблицу.
-    Если таблицы нет — кидает TableNotFound. Если число значений
-    не совпадает с числом колонок — кидает ValueError.
-    """
-    schema = load_schema()
-
-    if table_name not in schema:
-        raise TableNotFound("Таблицы '" + table_name + "' не существует")
-
-    columns = schema[table_name]
-
-    if len(values) != len(columns):
-        raise ValueError(
-            "Ожидалось " + str(len(columns)) +
-            " значений, получено " + str(len(values))
-        )
-
-    rows = read_lines(table_file(table_name))
-    rows.append("|".join(values))
-    write_lines(table_file(table_name), rows)
-
-
-def select(table_name):
-    """
-    озвращает все строки таблицы в виде матрицы — списка списков.
-    Если таблицы нет — кидает TableNotFound. Пользователь сам решает,
-    как показать эти данные: текстом, таблицей, отчётом.
-    """
-    schema = load_schema()
-
-    if table_name not in schema:
-        raise TableNotFound("Таблицы '" + table_name + "' не существует")
-
-    rows = read_lines(table_file(table_name))
-
-    matrix = []
-    for row in rows:
-        matrix.append(row.split("|"))
-    return matrix
+        return matrix

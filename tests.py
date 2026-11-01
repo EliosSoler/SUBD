@@ -1,104 +1,196 @@
-# Тесты функций интерфейса СУБД.
-# Проверяют успешные и ошибочные сценарии.
+# Тесты СУБД через встроенный модуль unittest.
+# Класс на каждую функцию. Метод на каждый сценарий.
+# setUp создаёт чистую среду. tearDown убирает за собой.
 
-from db import (
-    create_table, drop_table, alter_table, insert, select,
-    TableAlreadyExists, TableNotFound,
-)
-
-
-print("========== ТЕСТЫ ==========\n")
+import unittest
+from db import Database, TableAlreadyExists, TableNotFound, ColumnNotFound
 
 
-print("--- ТЕСТ 1: создание таблицы ---")
-try:
-    create_table("test", ["id", "name"])
-    print("OK: таблица test создана")
-except TableAlreadyExists as e:
-    print("Ошибка:", e)
-print()
+class BaseTest(unittest.TestCase):
+    """
+    Базовый класс: общая подготовка для всех тестов.
+    """
+
+    def setUp(self):
+        """
+        Перед каждым тестом — создать объект базы.
+        """
+        self.db = Database("database")
+
+    def tearDown(self):
+        """
+        После каждого теста — удалить таблицу test, если есть.
+        """
+        try:
+            self.db.drop_table("test")
+        except TableNotFound:
+            pass
 
 
-print("--- ТЕСТ 2: повторное создание ---")
-try:
-    create_table("test", ["id", "name"])
-    print("ОШИБКА ТЕСТА: исключение не сработало")
-except TableAlreadyExists as e:
-    print("OK: поймано TableAlreadyExists")
-print()
+class TestCreateTable(BaseTest):
+    """
+    Тесты функции create_table.
+    """
+
+    def test_create_ok(self):
+        """
+        Успешное создание таблицы.
+        """
+        self.db.create_table("test", ["id", "name"])
+
+    def test_create_exists(self):
+        """
+        Повторное создание — должно кинуть TableAlreadyExists.
+        """
+        self.db.create_table("test", ["id", "name"])
+        with self.assertRaises(TableAlreadyExists):
+            self.db.create_table("test", ["id", "name"])
 
 
-print("--- ТЕСТ 3: insert ---")
-try:
-    insert("test", ["1", "Вася"])
-    insert("test", ["2", "Петя"])
-    print("OK: строки добавлены")
-except (TableNotFound, ValueError) as e:
-    print("Ошибка:", e)
-print()
+class TestDropTable(BaseTest):
+    """
+    Тесты функции drop_table.
+    """
+
+    def test_drop_ok(self):
+        """
+        Успешное удаление таблицы.
+        """
+        self.db.create_table("test", ["id"])
+        self.db.drop_table("test")
+
+    def test_drop_not_found(self):
+        """
+        Удаление несуществующей таблицы — TableNotFound.
+        """
+        with self.assertRaises(TableNotFound):
+            self.db.drop_table("test")
 
 
-print("--- ТЕСТ 4: insert с малым числом значений ---")
-try:
-    insert("test", ["3"])
-    print("ОШИБКА ТЕСТА: исключение не сработало")
-except ValueError as e:
-    print("OK: поймано ValueError")
-print()
+class TestAlterTable(BaseTest):
+    """
+    Тесты функции alter_table.
+    """
+
+    def test_alter_ok(self):
+        """
+        Успешное изменение структуры.
+        """
+        self.db.create_table("test", ["id"])
+        self.db.alter_table("test", ["id", "name", "age"])
+
+    def test_alter_not_found(self):
+        """
+        Изменение несуществующей — TableNotFound.
+        """
+        with self.assertRaises(TableNotFound):
+            self.db.alter_table("test", ["id"])
 
 
-print("--- ТЕСТ 5: insert в несуществующую таблицу ---")
-try:
-    insert("no_table", ["1", "X"])
-    print("ОШИБКА ТЕСТА: исключение не сработало")
-except TableNotFound as e:
-    print("OK: поймано TableNotFound")
-print()
+class TestInsert(BaseTest):
+    """
+    Тесты функции insert.
+    """
+
+    def test_insert_ok(self):
+        """
+        Успешное добавление строки.
+        """
+        self.db.create_table("test", ["id", "name"])
+        self.db.insert("test", ["1", "Вася"])
+
+    def test_insert_wrong_count(self):
+        """
+        Неверное число значений — ValueError.
+        """
+        self.db.create_table("test", ["id", "name"])
+        with self.assertRaises(ValueError):
+            self.db.insert("test", ["1"])
+
+    def test_insert_not_found(self):
+        """
+        Вставка в несуществующую таблицу — TableNotFound.
+        """
+        with self.assertRaises(TableNotFound):
+            self.db.insert("test", ["1", "Вася"])
 
 
-print("--- ТЕСТ 6: select возвращает матрицу ---")
-try:
-    matrix = select("test")
-    print("OK: получено", matrix)
-except TableNotFound as e:
-    print("Ошибка:", e)
-print()
+class TestSelect(BaseTest):
+    """
+    Тесты функции select.
+    """
+
+    def setUp(self):
+        """
+        Перед каждым тестом — создать таблицу test и заполнить.
+        """
+        super().setUp()
+        self.db.create_table("test", ["id", "name", "age"])
+        self.db.insert("test", ["1", "Вася", "20"])
+        self.db.insert("test", ["2", "Петя", "22"])
+
+    def test_select_all(self):
+        """
+        select без параметра — все поля.
+        """
+        result = self.db.select("test")
+        expected = [
+            ["id", "name", "age"],
+            ["1", "Вася", "20"],
+            ["2", "Петя", "22"],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_select_fields(self):
+        """
+        select с полями — только name, age.
+        """
+        result = self.db.select("test", "name,age")
+        expected = [
+            ["name", "age"],
+            ["Вася", "20"],
+            ["Петя", "22"],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_select_fields_order(self):
+        """
+        Другой порядок — age, name.
+        """
+        result = self.db.select("test", "age,name")
+        expected = [
+            ["age", "name"],
+            ["20", "Вася"],
+            ["22", "Петя"],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_select_fields_duplicate(self):
+        """
+        Дублирование поля — name, name.
+        """
+        result = self.db.select("test", "name,name")
+        expected = [
+            ["name", "name"],
+            ["Вася", "Вася"],
+            ["Петя", "Петя"],
+        ]
+        self.assertEqual(result, expected)
+
+    def test_select_column_not_found(self):
+        """
+        Несуществующее поле — ColumnNotFound.
+        """
+        with self.assertRaises(ColumnNotFound):
+            self.db.select("test", "email")
+
+    def test_select_not_found(self):
+        """
+        Несуществующая таблица — TableNotFound.
+        """
+        with self.assertRaises(TableNotFound):
+            self.db.select("no_table")
 
 
-print("--- ТЕСТ 7: alter_table ---")
-try:
-    alter_table("test", ["id", "name", "age"])
-    print("OK: структура изменена")
-except TableNotFound as e:
-    print("Ошибка:", e)
-print()
-
-
-print("--- ТЕСТ 8: alter_table несуществующей ---")
-try:
-    alter_table("no_table", ["id"])
-    print("ОШИБКА ТЕСТА: исключение не сработало")
-except TableNotFound as e:
-    print("OK: поймано TableNotFound")
-print()
-
-
-print("--- ТЕСТ 9: drop_table ---")
-try:
-    drop_table("test")
-    print("OK: таблица удалена")
-except TableNotFound as e:
-    print("Ошибка:", e)
-print()
-
-
-print("--- ТЕСТ 10: повторный drop_table ---")
-try:
-    drop_table("test")
-    print("ОШИБКА ТЕСТА: исключение не сработало")
-except TableNotFound as e:
-    print("OK: поймано TableNotFound")
-print()
-
-
-print("========== ТЕСТЫ ЗАВЕРШЕНЫ ==========")
+if __name__ == "__main__":
+    unittest.main()
