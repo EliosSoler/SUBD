@@ -23,6 +23,50 @@ class ColumnNotFound(DBError):
     pass
 
 
+class Result:
+    """
+    Класс результата выборки.
+    Хранит выбранные поля и строки.
+    Фильтрует строки через лямбда функцию.
+    """
+
+    def __init__(self, fields):
+        """Создаёт пустой результат с указанными полями."""
+        self.fields = fields
+        self.rows = []
+
+    def add(self, row):
+        """Добавляет одну строку в результат."""
+        self.rows.append(row)
+
+    def to_dicts(self):
+        """
+        Превращает строки в список словарей.
+        """
+        dict_list = []
+        for row in self.rows:
+            record = {}
+            for i in range(len(self.fields)):
+                record[self.fields[i]] = row[i]
+            dict_list.append(record)
+        return dict_list
+
+    def filter(self, func):
+        """
+        Фильтрует строки функцией.
+        func принимает словарь (record) и возвращает True/False.
+        Возвращает новый объект Result.
+        """
+        new_result = Result(self.fields)
+        dict_rows = self.to_dicts()
+
+        for i in range(len(self.rows)):
+            if func(dict_rows[i]):
+                new_result.add(self.rows[i])
+
+        return new_result
+
+
 class Database:
     """
     Класс базы данных.
@@ -49,9 +93,7 @@ class Database:
         return self.folder + "/" + table_name + ".txt"
 
     def _read_lines(self, filename):
-        """
-        Читает файл и возвращает список непустых строк.
-        """
+        """Читает файл и возвращает список непустых строк."""
         if not os.path.exists(filename):
             return []
 
@@ -67,7 +109,7 @@ class Database:
 
     def _write_lines(self, filename, lines):
         """
-        Пишет списоК строк в файл.
+        Пишет список строк в файл.
         """
         f = open(filename, "w", encoding="utf-8")
         f.write("\n".join(lines))
@@ -155,10 +197,9 @@ class Database:
 
     def select(self, table_name, fields="*"):
         """
-        Возвращает строки таблицы в виде матрицы.
+        Возвращает объект Result с выбранными полями.
         Второй параметр список полей через запятую в любом порядке.
         Можно дублировать поля. По умолчанию "*" — все поля.
-        Формат вывода: первая строка имена выбранных полей, дальше строки значений.
         Кидает TableNotFound, если таблицы нет,
         и ColumnNotFound, если запрошено несуществующее поле.
         """
@@ -181,8 +222,7 @@ class Database:
         for field in selected:
             indexes.append(columns.index(field))
 
-        matrix = []
-        matrix.append(list (selected))
+        result = Result(selected)
 
         rows = self._read_lines(self._table_file(table_name))
         for row in rows:
@@ -190,6 +230,6 @@ class Database:
             new_row = []
             for i in indexes:
                 new_row.append(values[i])
-            matrix.append(new_row)
+            result.add(new_row)
 
-        return matrix
+        return result
