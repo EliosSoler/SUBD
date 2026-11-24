@@ -1,12 +1,12 @@
 # Тесты СУБД.
 # Проверяем создание, удаление, изменение структуры, вставку данных,
-# выборку с фильтрацией и граничные случаи.
+# выборку с фильтрацией, сортировку и граничные случаи.
 
 
 import unittest
 import os
 import shutil
-from db import Database, TableAlreadyExists, TableNotFound, ColumnNotFound
+from db import Database, TableAlreadyExists, TableNotFound, ColumnNotFound, Asc, Desc
 
 
 class StartTest(unittest.TestCase):
@@ -230,17 +230,17 @@ class TestFilter(StartTest):
 
     def test_filter_age(self):
         """
-        Фильтрует по возрасту (оставляет старше 20).
+        Фильтрует по возрасту (оставляет старше 20). Использует точку.
         """
-        res = self.db.select("users", "name,age").filter(lambda r: int(r["age"]) > 20)
+        res = self.db.select("users", "name,age").filter(lambda r: int(r.age) > 20)
         self.assertEqual(len(res.rows), 1)
         self.assertEqual(res.rows[0], ["Петя", "22"])
 
     def test_filter_name(self):
         """
-        Фильтрует по имени (оставляет только Машу).
+        Фильтрует по имени (оставляет только Машу). Использует точку.
         """
-        res = self.db.select("users", "name,age").filter(lambda r: r["name"] == "Маша")
+        res = self.db.select("users", "name,age").filter(lambda r: r.name == "Маша")
         self.assertEqual(len(res.rows), 1)
         self.assertEqual(res.rows[0], ["Маша", "19"])
 
@@ -248,15 +248,80 @@ class TestFilter(StartTest):
         """
         Фильтрует и возвращает пустой результат, если нет подходящих.
         """
-        res = self.db.select("users", "name,age").filter(lambda r: int(r["age"]) > 100)
+        res = self.db.select("users", "name,age").filter(lambda r: int(r.age) > 100)
         self.assertEqual(len(res.rows), 0)
 
     def test_filter_all(self):
         """
         Фильтрует и оставляет все строки, так как условие верное для всех.
         """
-        res = self.db.select("users", "name,age").filter(lambda r: int(r["age"]) > 0)
+        res = self.db.select("users", "name,age").filter(lambda r: int(r.age) > 0)
         self.assertEqual(len(res.rows), 3)
+
+
+class TestSort(StartTest):
+    """
+    Тесты сортировки данных (метод order).
+    """
+
+    def setUp(self):
+        """
+        Заполняет users данными для сортировки.
+        """
+        self.db._write_lines(self.db._table_file("users"), [])
+        self.db.insert("users", ["1", "Вася", "20"])
+        self.db.insert("users", ["2", "Петя", "22"])
+        self.db.insert("users", ["3", "Маша", "19"])
+
+    def test_sort_asc(self):
+        """
+        Сортировка по возрастанию возраста.
+        """
+        res = self.db.select("users", "name,age").order(Asc("age"))
+        self.assertEqual(res.rows[0], ["Маша", "19"])
+        self.assertEqual(res.rows[1], ["Вася", "20"])
+        self.assertEqual(res.rows[2], ["Петя", "22"])
+
+    def test_sort_desc(self):
+        """
+        Сортировка по убыванию возраста.
+        """
+        res = self.db.select("users", "name,age").order(Desc("age"))
+        self.assertEqual(res.rows[0], ["Петя", "22"])
+        self.assertEqual(res.rows[1], ["Вася", "20"])
+        self.assertEqual(res.rows[2], ["Маша", "19"])
+
+    def test_sort_multiple_same(self):
+        """
+        Сортировка по двум полям (возраст и имя).
+        Сортируем по возрасту (по возрастанию), потом по имени (по возрастанию).
+        """
+        self.db.insert("users", ["4", "Аня", "20"])
+        res = self.db.select("users", "name,age").order(Asc("age"), Asc("name"))
+        self.assertEqual(res.rows[0], ["Маша", "19"])
+        self.assertEqual(res.rows[1], ["Аня", "20"])
+        self.assertEqual(res.rows[2], ["Вася", "20"])
+        self.assertEqual(res.rows[3], ["Петя", "22"])
+
+    def test_sort_multiple_diff(self):
+        """
+        Сортировка по двум полям с разными направлениями.
+        Сортируем по возрасту (возрастание), а по имени (убывание).
+        """
+        self.db.insert("users", ["4", "Аня", "20"])
+        res = self.db.select("users", "name,age").order(Asc("age"), Desc("name"))
+        self.assertEqual(res.rows[0], ["Маша", "19"])
+        self.assertEqual(res.rows[1], ["Вася", "20"])
+        self.assertEqual(res.rows[2], ["Аня", "20"])
+        self.assertEqual(res.rows[3], ["Петя", "22"])
+
+    def test_sort_empty(self):
+        """
+        Сортировка пустого результата .
+        """
+        self.db._write_lines(self.db._table_file("users"), [])
+        res = self.db.select("users").order(Asc("age"))
+        self.assertEqual(len(res.rows), 0)
 
 
 class TestEmpty(StartTest):

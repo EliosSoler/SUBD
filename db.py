@@ -4,23 +4,59 @@ import os
 
 
 class DBError(Exception):
-    """Базовое исключение СУБД. От него наследуются остальные."""
+    """
+    Базовое исключение СУБД. От него наследуются остальные.
+    """
     pass
 
 
 class TableAlreadyExists(DBError):
-    """Таблица с таким именем уже есть."""
+    """
+    Таблица с таким именем уже есть.
+    """
     pass
 
 
 class TableNotFound(DBError):
-    """Таблицы с таким именем нет."""
+    """
+    Таблицы с таким именем нет.
+    """
     pass
 
 
 class ColumnNotFound(DBError):
-    """Колонки с таким именем нет в таблице."""
+    """
+    Колонки с таким именем нет в таблице.
+    """
     pass
+
+
+class Record:
+    """
+    Запись позволяющая обращаться к полям через точку (r.age).
+    """
+
+    def __init__(self, data):
+        for key in data:
+            setattr(self, key, data[key])
+
+
+class Asc:
+    """
+    Правило сортировки по возрастанию.
+    """
+
+    def __init__(self, field):
+        self.field = field
+
+
+class Desc(Asc):
+    """
+    Правило сортировки по убыванию.Наследник Asc.
+    """
+
+    def __init__(self, field):
+        super().__init__(field)
 
 
 class Result:
@@ -31,7 +67,9 @@ class Result:
     """
 
     def __init__(self, fields):
-        """Создаёт пустой результат с указанными полями."""
+        """
+        Создаёт пустой результат с указанными полями.
+        """
         self.fields = fields
         self.rows = []
 
@@ -41,14 +79,15 @@ class Result:
 
     def to_dicts(self):
         """
-        Превращает строки в список словарей.
+        Собирает данные из строк в словари и упаковывает их в объекты Record.
+        Для обращения к полям через (r.age)
         """
         dict_list = []
         for row in self.rows:
-            record = {}
+            record_dict = {}
             for i in range(len(self.fields)):
-                record[self.fields[i]] = row[i]
-            dict_list.append(record)
+                record_dict[self.fields[i]] = row[i]
+            dict_list.append(Record(record_dict))
         return dict_list
 
     def filter(self, func):
@@ -63,6 +102,37 @@ class Result:
         for i in range(len(self.rows)):
             if func(dict_rows[i]):
                 new_result.add(self.rows[i])
+
+        return new_result
+
+    def order(self, *args):
+        """
+        Сортирует данные по правилам (Asc/Desc).
+        """
+        if not args:
+            return self
+
+        smart_rows = self.to_dicts()
+        paired = list(zip(smart_rows, self.rows))
+
+        def sort_recursive(items, rules):
+            if not rules:
+                return items
+
+            last_rule = rules[-1]
+            remaining_rules = rules[:-1]
+
+            is_reverse = isinstance(last_rule, Desc)
+
+            items.sort(key=lambda x: getattr(x[0], last_rule.field), reverse=is_reverse)
+
+            return sort_recursive(items, remaining_rules)
+
+        sorted_pairs = sort_recursive(paired, list(args))
+
+        new_result = Result(self.fields)
+        for smart_rec, original_row in sorted_pairs:
+            new_result.add(original_row)
 
         return new_result
 
@@ -93,7 +163,9 @@ class Database:
         return self.folder + "/" + table_name + ".txt"
 
     def _read_lines(self, filename):
-        """Читает файл и возвращает список непустых строк."""
+        """
+        Читает файл и возвращает список непустых строк.
+        """
         if not os.path.exists(filename):
             return []
 
